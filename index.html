@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>PDF Marginalia</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #ccc; align-items: center; }
+  header input { flex: 1; padding: 6px; }
+  button { padding: 6px 12px; cursor: pointer; }
+  #status { color: #666; min-width: 90px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #pages { flex: 1; overflow: auto; background: #777; padding: 16px 16px 16px 56px; }
+  .page { position: relative; margin: 0 auto 16px; background: #fff; box-shadow: 0 2px 8px #0006; }
+  .page canvas { display: block; }
+  .line { position: absolute; cursor: pointer; }
+  .line:hover { background: #ffe06655; }
+  .line.commented { background: #4dabf744; }
+  .line.selected { background: #ff922b77; }
+  .num { position: absolute; left: -38px; width: 32px; text-align: right; font-size: 10px; color: #ddd; pointer-events: none; }
+  aside { width: 340px; border-left: 1px solid #ccc; display: flex; flex-direction: column; min-height: 0; }
+  #composer { padding: 10px; border-bottom: 1px solid #ccc; background: #fff8e6; }
+  #composer textarea, .comment textarea { width: 100%; height: 70px; margin-top: 6px; font: inherit; }
+  #list { flex: 1; overflow: auto; padding: 8px; }
+  .comment { border: 1px solid #ddd; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+  .comment .head { display: flex; justify-content: space-between; cursor: pointer; font-weight: 600; }
+  .comment blockquote { margin: 4px 0; color: #666; font-size: 12px; border-left: 3px solid #ccc; padding-left: 6px; }
+  .hint { color: #666; font-size: 12px; padding: 10px; }
+  #issue a { font-weight: 600; }
+  .hidden { display: none; }
+
+  /* ---- visual polish ---- */
+  :root { --accent: #4f46e5; --accent-dark: #4338ca; --border: #e5e7eb; --muted: #6b7280; }
+  body { font: 14px/1.45 "Segoe UI", system-ui, sans-serif; color: #1f2937; background: #f3f4f6; }
+  header { background: #fff; border-bottom: 1px solid var(--border); padding: 10px 16px; gap: 10px; box-shadow: 0 1px 3px #0000000d; z-index: 2; }
+  .brand { font-weight: 700; font-size: 16px; color: var(--accent); margin-right: 6px; white-space: nowrap; }
+  header input { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; font: inherit; outline: none; }
+  header input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #4f46e522; }
+  button { border: 1px solid #d1d5db; background: #fff; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 500; transition: background .15s; }
+  button:hover:not(:disabled) { background: #f3f4f6; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent-dark); }
+  #status { color: var(--muted); font-size: 13px; text-align: right; }
+  #pages { background: #e5e7eb; padding: 24px 24px 24px 64px; }
+  .page { border-radius: 4px; box-shadow: 0 4px 16px #00000026; margin-bottom: 24px; }
+  .num { color: #9ca3af; left: -44px; }
+  .line { border-radius: 3px; transition: background .1s; }
+  .line:hover { background: #fde68a66; }
+  .line.commented { background: #a5b4fc55; }
+  .line.selected { background: #fdba7466; outline: 1px solid #fb923c; }
+  aside { background: #fff; width: 360px; border-left: 1px solid var(--border); }
+  #composer { background: #eef2ff; border-bottom: 1px solid #c7d2fe; padding: 14px; }
+  #composer textarea, .comment textarea { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; resize: vertical; outline: none; margin-bottom: 8px; }
+  #list { background: #f9fafb; padding: 12px; }
+  .comment { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: 0 1px 2px #0000000d; }
+  .comment .head { color: var(--accent); font-size: 13px; }
+  .comment .head span:last-child { color: var(--muted); }
+  .comment .head span:last-child:hover { color: #dc2626; }
+  .comment blockquote { border-left: 3px solid #c7d2fe; margin: 8px 0; }
+  .hint { color: var(--muted); }
+  #issue:not(:empty) { background: #ecfdf5; color: #065f46; border-bottom: 1px solid #a7f3d0; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">PDF Marginalia</span>
+  <input id="url" type="text" autofocus spellcheck="false" autocomplete="off" placeholder="Paste a GitHub PDF URL (…/blob/main/path/file.pdf)">
+  <button id="paste" title="Paste from clipboard and load">Paste</button>
+  <button id="load" class="primary">Load</button>
+  <span id="status"></span>
+  <button id="submit" class="primary" disabled>Submit as issue</button>
+</header>
+<main>
+  <div id="pages"></div>
+  <aside>
+    <div id="composer" class="hidden">
+      <div><b id="where"></b></div>
+      <textarea id="newtext" placeholder="Comment (Ctrl+Enter to add)"></textarea>
+      <button id="add">Add comment</button> <button id="cancel">Cancel</button>
+    </div>
+    <div id="issue" class="hint"></div>
+    <div id="list"><div class="hint">Load a PDF, then click a line (shift-click to extend the range) to comment.</div></div>
+  </aside>
+</main>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const SCALE = 1.4;
+const $ = (id) => document.getElementById(id);
+let url = "", state = { comments: [], issue_url: null };
+let pageLines = {};          // page number -> [{text, el}]
+let selection = null;        // {page, start, end} (1-based, inclusive)
+let saveTimer = null;
+
+function setStatus(text) { $("status").textContent = text; }
+
+/* ---------- persistence: every change is saved to the server ---------- */
+function scheduleSave() {
+  setStatus("Saving…");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 300);
+}
+async function saveNow() {
+  try {
+    const res = await fetch("/api/comments?url=" + encodeURIComponent(url),
+      { method: "POST", body: JSON.stringify(state) });
+    if (!res.ok) throw new Error((await res.json()).error);
+    setStatus("Saved ✓");
+  } catch (err) { setStatus("Save failed!"); alert("Save failed: " + err.message); }
+}
+window.addEventListener("beforeunload", () => {
+  if (url) navigator.sendBeacon("/api/comments?url=" + encodeURIComponent(url), JSON.stringify(state));
+});
+
+/* ---------- PDF rendering ---------- */
+async function load() {
+  url = $("url").value.trim();
+  if (!url) return;
+  localStorage.setItem("lastUrl", url);
+  setStatus("Loading…");
+  try {
+    const saved = await fetch("/api/comments?url=" + encodeURIComponent(url));
+    if (!saved.ok) throw new Error((await saved.json()).error);
+    state = await saved.json();
+    const res = await fetch("/api/pdf?url=" + encodeURIComponent(url));
+    if (!res.ok) throw new Error((await res.json()).error);
+    const pdf = await pdfjsLib.getDocument({ data: await res.arrayBuffer() }).promise;
+    $("pages").innerHTML = "";
+    pageLines = {};
+    for (let n = 1; n <= pdf.numPages; n++) await renderPage(pdf, n);
+    $("submit").disabled = false;
+    refresh();
+    setStatus(`Loaded (${pdf.numPages} pages)`);
+  } catch (err) { setStatus("Error"); alert(err.message); }
+}
+
+/** Group text items into visual lines (split on large horizontal gaps for columns). */
+function buildLines(items, viewport) {
+  const raw = items.filter((i) => i.str.trim()).map((i) => {
+    const t = pdfjsLib.Util.transform(viewport.transform, i.transform);
+    return { str: i.str, x: t[4], y: t[5], w: i.width * viewport.scale, h: Math.hypot(t[2], t[3]) };
+  }).sort((a, b) => a.y - b.y);
+  const rows = [];
+  for (const item of raw) {
+    const row = rows.find((r) => Math.abs(r.y - item.y) < item.h * 0.5);
+    row ? row.items.push(item) : rows.push({ y: item.y, items: [item] });
+  }
+  const lines = [];
+  for (const row of rows) {
+    row.items.sort((a, b) => a.x - b.x);
+    let seg = null;
+    for (const it of row.items) {
+      if (seg && it.x - seg.right < it.h * 2) {
+        seg.text += (it.x - seg.right > it.h * 0.15 ? " " : "") + it.str;
+        seg.right = Math.max(seg.right, it.x + it.w);
+        seg.h = Math.max(seg.h, it.h);
+      } else {
+        seg = { text: it.str, left: it.x, right: it.x + it.w, y: row.y, h: it.h };
+        lines.push(seg);
+      }
+    }
+  }
+  return lines.sort((a, b) => Math.abs(a.y - b.y) < 3 ? a.left - b.left : a.y - b.y);
+}
+
+async function renderPage(pdf, n) {
+  const page = await pdf.getPage(n);
+  const viewport = page.getViewport({ scale: SCALE });
+  const dpr = window.devicePixelRatio || 1;
+  const wrap = document.createElement("div");
+  wrap.className = "page";
+  wrap.id = "page" + n;
+  wrap.style.width = viewport.width + "px";
+  wrap.style.height = viewport.height + "px";
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width * dpr; canvas.height = viewport.height * dpr;
+  canvas.style.width = viewport.width + "px"; canvas.style.height = viewport.height + "px";
+  wrap.appendChild(canvas);
+  $("pages").appendChild(wrap);
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
+
+  const content = await page.getTextContent();
+  pageLines[n] = buildLines(content.items, viewport).map((ln, idx) => {
+    const el = document.createElement("div");
+    el.className = "line";
+    el.style.cssText = `left:${ln.left - 2}px;top:${ln.y - ln.h * 0.9}px;width:${ln.right - ln.left + 4}px;height:${ln.h * 1.15}px`;
+    el.onclick = (ev) => pickLine(n, idx + 1, ev.shiftKey);
+    const num = document.createElement("span");
+    num.className = "num"; num.textContent = idx + 1;
+    num.style.top = `${ln.y - ln.h * 0.9}px`;
+    wrap.append(el, num);
+    return { text: ln.text, el };
+  });
+}
+
+/* ---------- selection and comments ---------- */
+function pickLine(page, line, extend) {
+  if (extend && selection && selection.page === page) {
+    selection = { page, start: Math.min(selection.start, line), end: Math.max(selection.end, line) };
+  } else {
+    selection = { page, start: line, end: line };
+  }
+  $("composer").classList.remove("hidden");
+  $("newtext").focus();
+  refresh();
+}
+
+function rangeText(c) {
+  return `Page ${c.page}, ${c.start === c.end ? "line " + c.start : `lines ${c.start}–${c.end}`}`;
+}
+
+function addComment() {
+  const text = $("newtext").value.trim();
+  if (!selection || !text) return;
+  const quote = pageLines[selection.page].slice(selection.start - 1, selection.end).map((l) => l.text).join(" ");
+  state.comments.push({ id: crypto.randomUUID(), ...selection, quote, text });
+  $("newtext").value = "";
+  cancel();
+  scheduleSave();
+}
+
+function cancel() {
+  selection = null;
+  $("composer").classList.add("hidden");
+  refresh();
+}
+
+function refresh() {
+  for (const [n, lines] of Object.entries(pageLines)) {
+    lines.forEach((ln, i) => {
+      const num = i + 1;
+      const inSel = selection && selection.page == n && num >= selection.start && num <= selection.end;
+      const commented = state.comments.some((c) => c.page == n && num >= c.start && num <= c.end);
+      ln.el.classList.toggle("selected", !!inSel);
+      ln.el.classList.toggle("commented", commented && !inSel);
+    });
+  }
+  if (selection) $("where").textContent = rangeText(selection);
+  $("issue").innerHTML = state.issue_url
+    ? `Submitted: <a href="${state.issue_url}" target="_blank">${state.issue_url}</a>` : "";
+  renderList();
+}
+
+function renderList() {
+  const list = $("list");
+  if (document.activeElement && list.contains(document.activeElement)) return; // don't disturb typing
+  list.innerHTML = "";
+  const sorted = [...state.comments].sort((a, b) => a.page - b.page || a.start - b.start);
+  for (const c of sorted) {
+    const box = document.createElement("div");
+    box.className = "comment";
+    const head = document.createElement("div");
+    head.className = "head";
+    head.innerHTML = `<span>${rangeText(c)}</span><span title="Delete" style="cursor:pointer">✕</span>`;
+    head.firstChild.onclick = () => $("page" + c.page).scrollIntoView({ behavior: "smooth" });
+    head.lastChild.onclick = () => {
+      if (!confirm("Delete this comment?")) return;
+      state.comments = state.comments.filter((x) => x.id !== c.id);
+      scheduleSave(); refresh();
+    };
+    const quote = document.createElement("blockquote");
+    quote.textContent = c.quote.length > 140 ? c.quote.slice(0, 140) + "…" : c.quote;
+    const area = document.createElement("textarea");
+    area.value = c.text;
+    area.oninput = () => { c.text = area.value; scheduleSave(); };
+    box.append(head, quote, area);
+    list.appendChild(box);
+  }
+  if (!sorted.length) list.innerHTML = '<div class="hint">No comments yet. Click a line (shift-click to extend the range).</div>';
+}
+
+async function submitIssue() {
+  const n = state.comments.filter((c) => c.text.trim()).length;
+  if (!n) return alert("No comments to submit.");
+  if (!confirm(`Create a GitHub issue with ${n} comment(s) in the source repo?`)) return;
+  clearTimeout(saveTimer);
+  await saveNow();
+  setStatus("Submitting…");
+  const res = await fetch("/api/submit?url=" + encodeURIComponent(url), { method: "POST", body: JSON.stringify(state) });
+  const data = await res.json();
+  if (!res.ok) { setStatus("Error"); return alert(data.error); }
+  state.issue_url = data.issue_url;
+  setStatus("Submitted ✓");
+  refresh();
+  window.open(data.issue_url, "_blank");
+}
+
+$("load").onclick = load;
+$("paste").onclick = async () => {
+  try { $("url").value = (await navigator.clipboard.readText()).trim(); load(); }
+  catch { $("url").focus(); alert("Clipboard access was blocked - click the box and press Ctrl+V instead."); }
+};
+$("url").addEventListener("paste", () => setTimeout(() => { $("url").value = $("url").value.trim(); }, 0));
+$("url").onkeydown = (e) => e.key === "Enter" && load();
+$("add").onclick = addComment;
+$("cancel").onclick = cancel;
+$("submit").onclick = submitIssue;
+$("newtext").onkeydown = (e) => { if (e.key === "Enter" && e.ctrlKey) addComment(); };
+$("url").value = localStorage.getItem("lastUrl") || "";
+</script>
+</body>
+</html>
